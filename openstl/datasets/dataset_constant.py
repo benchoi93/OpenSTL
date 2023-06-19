@@ -1,4 +1,12 @@
 dataset_parameters = {
+    'sst':{
+        'in_shape': [30, 1, 24, 144],
+        'pre_seq_length': 30,
+        'aft_seq_length': 30,
+        'total_length': 60,
+        'data_name': 'sst',
+        'metrics': ['mse', 'mae', 'ssim', 'psnr'],
+    },
     'mfmnist': {
         'in_shape': [10, 1, 64, 64],
         'pre_seq_length': 10,
