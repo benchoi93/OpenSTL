@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 
 from openstl.modules import ConvLSTMCell
+from openstl.methods.dynmix import better_loss
 
 
 class ConvLSTM_Model(nn.Module):
@@ -12,7 +13,7 @@ class ConvLSTM_Model(nn.Module):
 
     """
 
-    def __init__(self, num_layers, num_hidden, configs, **kwargs):
+    def __init__(self, num_layers, num_hidden, configs, criterion=None, **kwargs):
         super(ConvLSTM_Model, self).__init__()
         T, C, H, W = configs.in_shape
 
@@ -24,13 +25,16 @@ class ConvLSTM_Model(nn.Module):
 
         height = H // configs.patch_size
         width = W // configs.patch_size
-        self.MSE_criterion = nn.MSELoss()
+        if criterion is None:
+            self.criterion = nn.MSELoss()
+        else:
+            self.criterion = criterion
 
         for i in range(num_layers):
             in_channel = self.frame_channel if i == 0 else num_hidden[i - 1]
             cell_list.append(
                 ConvLSTMCell(in_channel, num_hidden[i], height, width, configs.filter_size,
-                                       configs.stride, configs.layer_norm)
+                             configs.stride, configs.layer_norm)
             )
         self.cell_list = nn.ModuleList(cell_list)
         self.conv_last = nn.Conv2d(num_hidden[num_layers - 1], self.frame_channel,
@@ -66,7 +70,7 @@ class ConvLSTM_Model(nn.Module):
                     net = frames[:, t]
                 else:
                     net = mask_true[:, t - self.configs.pre_seq_length] * frames[:, t] + \
-                          (1 - mask_true[:, t - self.configs.pre_seq_length]) * x_gen
+                        (1 - mask_true[:, t - self.configs.pre_seq_length]) * x_gen
 
             h_t[0], c_t[0] = self.cell_list[0](net, h_t[0], c_t[0])
 
@@ -79,7 +83,7 @@ class ConvLSTM_Model(nn.Module):
         # [length, batch, channel, height, width] -> [batch, length, height, width, channel]
         next_frames = torch.stack(next_frames, dim=0).permute(1, 0, 3, 4, 2).contiguous()
         if kwargs.get('return_loss', True):
-            loss = self.MSE_criterion(next_frames, frames_tensor[:, 1:])
+            loss = self.criterion(next_frames, frames_tensor[:, 1:])
         else:
             loss = None
 

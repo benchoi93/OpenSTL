@@ -1,13 +1,13 @@
+from openstl.datasets.utils import create_loader
+from torch.utils.data import Dataset
+import torch.nn.functional as F
+import torch
+import os.path as osp
+import numpy as np
+import random
 import warnings
 warnings.filterwarnings("ignore")
 
-import random
-import numpy as np
-import os.path as osp
-import torch
-import torch.nn.functional as F
-from torch.utils.data import Dataset
-from openstl.datasets.utils import create_loader
 
 try:
     import xarray as xr
@@ -132,8 +132,8 @@ class WeatherBenchDataset(Dataset):
                     data_map[data_name], data_map[data_name]), combine='by_coords')
             except (AttributeError, ValueError):
                 assert False and 'Please install xarray and its dependency (e.g., netcdf4), ' \
-                                    'pip install xarray==0.19.0,' \
-                                    'pip install netcdf4 h5netcdf dask'
+                    'pip install xarray==0.19.0,' \
+                    'pip install netcdf4 h5netcdf dask'
             except OSError:
                 print("OSError: Invalid path {}/{}/*.nc".format(self.data_root, data_map[data_name]))
                 assert False
@@ -191,8 +191,8 @@ class WeatherBenchDataset(Dataset):
         if not single_variant and isinstance(self.level, int):
             data = data[:, -self.level:, ...]
 
-        mean = data.mean(axis=(0, 2, 3)).reshape(1, data.shape[1], 1, 1)
-        std = data.std(axis=(0, 2, 3)).reshape(1, data.shape[1], 1, 1)
+        mean = data.mean(axis=(0, 2, 3)).reshape(1, data.shape[1], 1, 1).item()
+        std = data.std(axis=(0, 2, 3)).reshape(1, data.shape[1], 1, 1).item()
         # mean = dataset.mean('time').mean(('lat', 'lon')).compute()[data_name].values
         # std = dataset.std('time').mean(('lat', 'lon')).compute()[data_name].values
         data = (data - mean) / std
@@ -255,21 +255,21 @@ def load_data(batch_size,
                                     idx_out=idx_out,
                                     step=step, level=level, use_augment=use_augment)
     vali_set = WeatherBenchDataset(weather_dataroot,
-                                    data_name=data_name, data_split=data_split,
-                                    training_time=val_time,
-                                    idx_in=idx_in,
-                                    idx_out=idx_out,
-                                    step=step, level=level, use_augment=False,
-                                    mean=train_set.mean,
-                                    std=train_set.std)
+                                   data_name=data_name, data_split=data_split,
+                                   training_time=val_time,
+                                   idx_in=idx_in,
+                                   idx_out=idx_out,
+                                   step=step, level=level, use_augment=False,
+                                   mean=train_set.mean,
+                                   std=train_set.std)
     test_set = WeatherBenchDataset(weather_dataroot,
-                                    data_name, data_split=data_split,
-                                    training_time=test_time,
-                                    idx_in=idx_in,
-                                    idx_out=idx_out,
-                                    step=step, level=level, use_augment=False,
-                                    mean=train_set.mean,
-                                    std=train_set.std)
+                                   data_name, data_split=data_split,
+                                   training_time=test_time,
+                                   idx_in=idx_in,
+                                   idx_out=idx_out,
+                                   step=step, level=level, use_augment=False,
+                                   mean=train_set.mean,
+                                   std=train_set.std)
 
     dataloader_train = create_loader(train_set,
                                      batch_size=batch_size,
@@ -277,7 +277,7 @@ def load_data(batch_size,
                                      pin_memory=True, drop_last=True,
                                      num_workers=num_workers,
                                      distributed=distributed, use_prefetcher=use_prefetcher)
-    dataloader_vali = create_loader(test_set, # validation_set,
+    dataloader_vali = create_loader(test_set,  # validation_set,
                                     batch_size=val_batch_size,
                                     shuffle=False, is_training=False,
                                     pin_memory=True, drop_last=drop_last,
@@ -295,7 +295,7 @@ def load_data(batch_size,
 
 if __name__ == '__main__':
     from openstl.core import metric
-    data_split=['5_625', '1_40625']
+    data_split = ['5_625', '1_40625']
     data_name = 't2m'
     # data_split=['5_625',]
     # data_name = 'mv'
@@ -304,16 +304,16 @@ if __name__ == '__main__':
         step, level = 24, [150, 500, 850]
         dataloader_train, _, dataloader_test = \
             load_data(batch_size=128,
-                    val_batch_size=32,
-                    data_root='../../data',
-                    num_workers=4, data_name=data_name,
-                    data_split=_split,
-                    train_time=['1979', '2015'],
-                    val_time=['2016', '2016'],
-                    test_time=['2017', '2018'],
-                    idx_in=[-11, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1, 0],
-                    idx_out=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
-                    step=step, level=level, use_augment=True)
+                      val_batch_size=32,
+                      data_root='../../data',
+                      num_workers=4, data_name=data_name,
+                      data_split=_split,
+                      train_time=['1979', '2015'],
+                      val_time=['2016', '2016'],
+                      test_time=['2017', '2018'],
+                      idx_in=[-11, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1, 0],
+                      idx_out=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+                      step=step, level=level, use_augment=True)
 
         print(len(dataloader_train), len(dataloader_test))
         for item in dataloader_train:

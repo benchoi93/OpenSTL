@@ -10,7 +10,6 @@ from openstl.utils import reduce_tensor
 from .simvp import SimVP
 
 
-
 class TAU(SimVP):
     r"""TAU
 
@@ -23,14 +22,14 @@ class TAU(SimVP):
         SimVP.__init__(self, args, device, steps_per_epoch)
         self.model = self._build_model(self.config)
         self.model_optim, self.scheduler, self.by_epoch = self._init_optimizer(steps_per_epoch)
-        self.criterion = nn.MSELoss()
 
     def _build_model(self, args):
         return SimVP_Model(**args).to(self.device)
-    
+
     def diff_div_reg(self, pred_y, batch_y, tau=0.1, eps=1e-12):
         B, T, C = pred_y.shape[:3]
-        if T <= 2:  return 0
+        if T <= 2:
+            return 0
         gap_pred_y = (pred_y[:, 1:] - pred_y[:, :-1]).reshape(B, T-1, -1)
         gap_batch_y = (batch_y[:, 1:] - batch_y[:, :-1]).reshape(B, T-1, -1)
         softmax_gap_p = F.softmax(gap_pred_y / tau, -1)
@@ -59,6 +58,8 @@ class TAU(SimVP):
 
             with self.amp_autocast():
                 pred_y = self._predict(batch_x)
+                pred_y = pred_y * train_loader.dataset.std + train_loader.dataset.mean
+                batch_y = batch_y * train_loader.dataset.std + train_loader.dataset.mean
                 loss = self.criterion(pred_y, batch_y) + self.args.alpha * self.diff_div_reg(pred_y, batch_y)
 
             if not self.dist:

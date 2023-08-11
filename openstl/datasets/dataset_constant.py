@@ -1,11 +1,11 @@
 dataset_parameters = {
-    'sst':{
+    'sst': {
         'in_shape': [30, 1, 24, 144],
         'pre_seq_length': 30,
         'aft_seq_length': 30,
         'total_length': 60,
         'data_name': 'sst',
-        'metrics': ['mse', 'mae', 'ssim', 'psnr'],
+        'metrics': ['mse', 'rmse', 'mae'],
     },
     'mfmnist': {
         'in_shape': [10, 1, 64, 64],
@@ -36,7 +36,7 @@ dataset_parameters = {
         'pre_seq_length': 4,
         'aft_seq_length': 4,
         'total_length': 8,
-        'metrics': ['mse', 'mae', 'ssim', 'psnr'],
+        'metrics': ['mse', 'mae', 'rmse', 'ssim', 'psnr'],
     },
     'human': {
         'in_shape': [4, 3, 256, 256],

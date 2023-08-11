@@ -58,8 +58,12 @@ class Base_method(object):
         raise NotImplementedError
 
     def _init_optimizer(self, steps_per_epoch):
+        additional_params = []
+        if self.args.loss == "dynmix":
+            additional_params += list(self.criterion.covariance.parameters())
+
         return get_optim_scheduler(
-            self.args, self.args.epoch, self.model, steps_per_epoch)
+            self.args, self.args.epoch, self.model, steps_per_epoch, additional_params)
 
     def _init_distributed(self):
         """Initialize DDP training"""
@@ -67,14 +71,14 @@ class Base_method(object):
             self.amp_autocast = torch.cuda.amp.autocast
             self.loss_scaler = NativeScaler()
             if self.rank == 0:
-               print('Using native PyTorch AMP. Training in mixed precision (fp16).')
+                print('Using native PyTorch AMP. Training in mixed precision (fp16).')
         else:
             print('AMP not enabled. Training in float32.')
         self.model = NativeDDP(self.model, device_ids=[self.rank],
                                broadcast_buffers=self.args.broadcast_buffers,
                                find_unused_parameters=self.args.find_unused_parameters)
 
-    def train_one_epoch(self, runner, train_loader, **kwargs): 
+    def train_one_epoch(self, runner, train_loader, **kwargs):
         """Train the model with train_loader.
 
         Args:
@@ -164,6 +168,9 @@ class Base_method(object):
             with torch.no_grad():
                 batch_x, batch_y = batch_x.to(self.device), batch_y.to(self.device)
                 pred_y = self._predict(batch_x, batch_y)
+                if self.args.loss == "dynmix":
+                    pred_y_mix, logw = pred_y
+                    pred_y = (pred_y_mix.permute(0, 2, 1, 3, 4, 5) * logw.exp().unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)).sum(1)
 
             if gather_data:  # return raw datas
                 results.append(dict(zip(['inputs', 'preds', 'trues'],
@@ -172,7 +179,12 @@ class Base_method(object):
                 eval_res, _ = metric(pred_y.cpu().numpy(), batch_y.cpu().numpy(),
                                      data_loader.dataset.mean, data_loader.dataset.std,
                                      metrics=self.metric_list, spatial_norm=self.spatial_norm, return_log=False)
-                eval_res['loss'] = self.criterion(pred_y, batch_y).cpu().numpy()
+
+                if self.args.loss == "dynmix":
+                    eval_res['loss'] = self.criterion(pred_y_mix, batch_y, logw).cpu().numpy()
+                else:
+                    eval_res['loss'] = self.criterion(pred_y, batch_y).cpu().numpy()
+
                 for k in eval_res.keys():
                     eval_res[k] = eval_res[k].reshape(1)
                 results.append(eval_res)

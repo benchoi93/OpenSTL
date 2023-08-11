@@ -68,7 +68,7 @@ def create_parser():
                                  'PredRNN', 'predrnn', 'PredRNNpp', 'predrnnpp', 'PredRNNv2', 'predrnnv2',
                                  'SimVP', 'simvp', 'TAU', 'tau'],
                         help='Name of video prediction method to train (default: "SimVP")')
-    parser.add_argument('--config_file', '-c', default='configs/mmnist/simvp/SimVP_gSTA.py', type=str,
+    parser.add_argument('--config_file', '-c', default='configs/weather/SimVP.py', type=str,
                         help='Path to the default config file')
     parser.add_argument('--model_type', default=None, type=str,
                         help='Name of model for SimVP (default: None)')
@@ -114,5 +114,19 @@ def create_parser():
                         help='LR decay rate (default: 0.1)')
     parser.add_argument('--filter_bias_and_bn', type=bool, default=False,
                         help='LR decay rate (default: 0.1)')
+
+    parser.add_argument('--loss', default='dynmix', choices=['mse', 'mae', 'dynmix'], type=str, help='Loss function')
+    parser.add_argument('--rho', default=1, type=float, help='rho for dynmix loss')
+    parser.add_argument('--input_dim_x', type=int, default=32, help='input image width')
+    parser.add_argument('--input_dim_y', type=int, default=64, help='input image height')
+    parser.add_argument('--n_components', type=int, default=3, help='number of components for dynmix loss')
+    # parser.add_argument('--pred_len', type=int, default=30, help='prediction length')
+    parser.add_argument('--train_L_x', default=False, action='store_true', help='whether to train L_x')
+    parser.add_argument('--train_L_y', default=False, action='store_true', help='whether to train L_y')
+    parser.add_argument('--train_L_t', default=False, action='store_true', help='whether to train L_t')
+    parser.add_argument('--train_L_f', default=False, action='store_true', help='whether to train L_t')
+    # parser.add_argument('--train_L_x', type=bool, default=True, help='whether to train L_x')
+    # parser.add_argument('--train_L_y', type=bool, default=True, help='whether to train L_y')
+    # parser.add_argument('--train_L_t', type=bool, default=True, help='whether to train L_t')
 
     return parser

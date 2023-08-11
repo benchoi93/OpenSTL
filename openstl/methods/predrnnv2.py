@@ -8,6 +8,7 @@ from openstl.models import PredRNNv2_Model
 from openstl.utils import (reduce_tensor, reshape_patch,
                            reserve_schedule_sampling_exp, schedule_sampling)
 from .predrnn import PredRNN
+from .dynmix import better_loss
 
 
 class PredRNNv2(PredRNN):
@@ -22,7 +23,6 @@ class PredRNNv2(PredRNN):
         PredRNN.__init__(self, args, device, steps_per_epoch)
         self.model = self._build_model(self.args)
         self.model_optim, self.scheduler, self.by_epoch = self._init_optimizer(steps_per_epoch)
-        self.criterion = nn.MSELoss()
 
     def _build_model(self, args):
         num_hidden = [int(x) for x in self.args.num_hidden.split(',')]

@@ -61,7 +61,7 @@ def get_parameter_groups(model, weight_decay=1e-5, skip_list=(), get_num_layer=N
     return list(parameter_group_vars.values())
 
 
-def get_optim_scheduler(args, epoch, model, steps_per_epoch):
+def get_optim_scheduler(args, epoch, model, steps_per_epoch,  additional_params=[]):
     opt_lower = args.opt.lower()
     weight_decay = args.weight_decay
 
@@ -75,6 +75,9 @@ def get_optim_scheduler(args, epoch, model, steps_per_epoch):
         weight_decay = 0.
     else:
         parameters = model.parameters()
+
+    if args.loss == "dynmix":
+        parameters = list(parameters) + list(additional_params)
 
     opt_args = optim_parameters.get(opt_lower, dict())
     opt_args.update(lr=args.lr, weight_decay=weight_decay)

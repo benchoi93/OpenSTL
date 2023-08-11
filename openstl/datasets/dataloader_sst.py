@@ -7,6 +7,7 @@ from openstl.datasets.utils import create_loader
 import torch.nn.functional as F
 import random
 
+
 class SSTDataset(Dataset):
     """Sea Surface Temperature Dataset
 
@@ -20,19 +21,21 @@ class SSTDataset(Dataset):
         use_augment (bool): Whether to use augmentations (defaults to False).
     """
 
-    def __init__(self, data_root, training_time, in_steps, out_steps, 
-                 mean=None,std=None,
+    def __init__(self, data_root, training_time, in_steps, out_steps,
+                 mean=None, std=None,
                  transform_data=None, transform_labels=None, use_augment=False):
         super().__init__()
         # Load data from .h5 file
         with tables.open_file(data_root, 'r') as file:
             data = np.array(file.root['sst_out'])
-        
+
         # Extract the data within the range specified by training_time
         self.data = data[training_time[0]:training_time[1]]
-        # expand dim 
+        # expand dim
         self.data = np.expand_dims(self.data, axis=1)
-        
+        # nanfill to zero
+        self.data = np.nan_to_num(self.data, nan=0.0, posinf=0.0, neginf=0.0)
+
         self.in_steps = in_steps
         self.out_steps = out_steps
         self.transform_data = transform_data
@@ -47,11 +50,12 @@ class SSTDataset(Dataset):
             self.mean = mean
         else:
             self.mean = np.mean(self.data)
-        
+
         if std is not None:
             self.std = std
         else:
             self.std = np.std(self.data)
+        self.data = (self.data - self.mean) / self.std
 
     def _augment_seq(self, seqs, crop_scale=0.96):
         """Augmentations as a video sequence"""
@@ -66,7 +70,7 @@ class SSTDataset(Dataset):
         if random.randint(0, 1):
             seqs = torch.flip(seqs, dims=(2, ))  # horizontal flip
         return seqs
-    
+
     def __len__(self):
         return len(self.valid_idx)
 
@@ -74,7 +78,7 @@ class SSTDataset(Dataset):
         # Use valid_idx to get the start index for slicing the data
         start_idx = self.valid_idx[index]
         end_idx = start_idx + self.in_steps + self.out_steps
-        
+
         # Slice the data into input and output sequences
         sample = self.data[start_idx:end_idx]
         data = sample[:self.in_steps]
@@ -100,6 +104,7 @@ class SSTDataset(Dataset):
 # dataset = SSTDataset(data_root=data_root, training_time=training_time, in_steps=10, out_steps=5)
 # data, labels = dataset[0]
 
+
 def load_data(batch_size,
               val_batch_size,
               data_root,
@@ -108,31 +113,31 @@ def load_data(batch_size,
               val_time=[13514, 13880],
               test_time=[13880, 14245],
               in_steps=30,
-              out_steps = 30,
+              out_steps=30,
               level=1,
               distributed=False, use_augment=False, use_prefetcher=False, drop_last=False,
               **kwargs):
-    
-    _dataroot = osp.join(data_root, f'sst','sst_out_reduced.h5')
+
+    _dataroot = osp.join(data_root, f'sst', 'sst_out_reduced.h5')
     weather_dataroot = _dataroot if osp.exists(_dataroot) else osp.join(data_root, 'weather')
 
     train_set = SSTDataset(data_root=weather_dataroot,
-                                    training_time=train_time,
-                                    in_steps=in_steps, out_steps=out_steps,
-                                     use_augment=use_augment)
-    
+                           training_time=train_time,
+                           in_steps=in_steps, out_steps=out_steps,
+                           use_augment=use_augment)
+
     vali_set = SSTDataset(weather_dataroot,
-                                    training_time=val_time,
-                                    in_steps=in_steps, out_steps=out_steps,
-                                     use_augment=False,
-                                    mean=train_set.mean,
-                                    std=train_set.std)
+                          training_time=val_time,
+                          in_steps=in_steps, out_steps=out_steps,
+                          use_augment=False,
+                          mean=train_set.mean,
+                          std=train_set.std)
     test_set = SSTDataset(weather_dataroot,
-                                    training_time=test_time,
-                                    in_steps=in_steps, out_steps=out_steps,
-                                     use_augment=False,
-                                    mean=train_set.mean,
-                                    std=train_set.std)
+                          training_time=test_time,
+                          in_steps=in_steps, out_steps=out_steps,
+                          use_augment=False,
+                          mean=train_set.mean,
+                          std=train_set.std)
 
     dataloader_train = create_loader(train_set,
                                      batch_size=batch_size,
@@ -140,7 +145,7 @@ def load_data(batch_size,
                                      pin_memory=True, drop_last=True,
                                      num_workers=num_workers,
                                      distributed=distributed, use_prefetcher=use_prefetcher)
-    dataloader_vali = create_loader(test_set, # validation_set,
+    dataloader_vali = create_loader(test_set,  # validation_set,
                                     batch_size=val_batch_size,
                                     shuffle=False, is_training=False,
                                     pin_memory=True, drop_last=drop_last,

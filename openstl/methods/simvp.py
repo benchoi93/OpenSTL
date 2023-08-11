@@ -19,9 +19,26 @@ class SimVP(Base_method):
 
     def __init__(self, args, device, steps_per_epoch):
         Base_method.__init__(self, args, device, steps_per_epoch)
+        self._set_criterion(args)
         self.model = self._build_model(self.config)
         self.model_optim, self.scheduler, self.by_epoch = self._init_optimizer(steps_per_epoch)
-        self.criterion = nn.MSELoss()
+
+    def _set_criterion(self, args):
+        if args.loss == "mse":
+            self.criterion = nn.MSELoss()
+        elif args.loss == "mae":
+            self.criterion = nn.L1Loss()
+        elif args.loss == "dynmix":
+            from .dynmix import better_loss
+            self.criterion = better_loss(in_shape=args.in_shape,
+                                         rho=args.rho,
+                                         n_components=args.n_components,
+                                         train_L_x=args.train_L_x,
+                                         train_L_y=args.train_L_y,
+                                         train_L_t=args.train_L_t,
+                                         train_L_f=args.train_L_f)
+        else:
+            raise NotImplementedError
 
     def _build_model(self, args):
         return SimVP_Model(**args).to(self.device)
@@ -37,7 +54,7 @@ class SimVP(Base_method):
             pred_y = []
             d = self.args.aft_seq_length // self.args.pre_seq_length
             m = self.args.aft_seq_length % self.args.pre_seq_length
-            
+
             cur_seq = batch_x.clone()
             for _ in range(d):
                 cur_seq = self.model(cur_seq)
@@ -46,7 +63,7 @@ class SimVP(Base_method):
             if m != 0:
                 cur_seq = self.model(cur_seq)
                 pred_y.append(cur_seq[:, :m])
-            
+
             pred_y = torch.cat(pred_y, dim=1)
         return pred_y
 
@@ -69,8 +86,13 @@ class SimVP(Base_method):
             runner.call_hook('before_train_iter')
 
             with self.amp_autocast():
-                pred_y = self._predict(batch_x)
-                loss = self.criterion(pred_y, batch_y)
+                pred_y, logw = self._predict(batch_x)
+                pred_y = pred_y * train_loader.dataset.std + train_loader.dataset.mean
+                batch_y = batch_y * train_loader.dataset.std + train_loader.dataset.mean
+                if self.args.loss == "dynmix":
+                    loss = self.criterion(pred_y, batch_y, logw)
+                else:
+                    loss = self.criterion(pred_y[:, :, 0, ...], batch_y)
 
             if not self.dist:
                 losses_m.update(loss.item(), batch_x.size(0))

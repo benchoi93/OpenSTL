@@ -20,8 +20,12 @@ class PredRNN(Base_method):
 
     def __init__(self, args, device, steps_per_epoch):
         Base_method.__init__(self, args, device, steps_per_epoch)
+        self._set_criterion(args)
         self.model = self._build_model(self.args)
         self.model_optim, self.scheduler, self.by_epoch = self._init_optimizer(steps_per_epoch)
+        # self.criterion = nn.MSELoss()
+
+    def _set_criterion(self, args):
         self.criterion = nn.MSELoss()
 
     def _build_model(self, args):
@@ -45,11 +49,11 @@ class PredRNN(Base_method):
 
         real_input_flag = torch.zeros(
             (batch_x.shape[0],
-            self.args.total_length - mask_input - 1,
-            img_height // self.args.patch_size,
-            img_width // self.args.patch_size,
-            self.args.patch_size ** 2 * img_channel)).to(self.device)
-            
+             self.args.total_length - mask_input - 1,
+             img_height // self.args.patch_size,
+             img_width // self.args.patch_size,
+             self.args.patch_size ** 2 * img_channel)).to(self.device)
+
         if self.args.reverse_scheduled_sampling == 1:
             real_input_flag[:, :self.args.pre_seq_length - 1, :, :] = 1.0
 

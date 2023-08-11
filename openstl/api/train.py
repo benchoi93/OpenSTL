@@ -10,8 +10,12 @@ import numpy as np
 from typing import Dict, List
 from fvcore.nn import FlopCountAnalysis, flop_count_table
 
+import seaborn as sns
+import matplotlib.pyplot as plt
 import torch
 import torch.distributed as dist
+
+from openstl.methods.dynmix import covariance, better_loss
 
 from openstl.core import Hook, metric, Recorder, get_priority, hook_maps
 from openstl.methods import method_maps
@@ -22,7 +26,7 @@ from openstl.utils import (set_seed, print_log, output_namespace, check_dir, col
 try:
     import nni
     has_nni = True
-except ImportError: 
+except ImportError:
     has_nni = False
 
 
@@ -45,6 +49,9 @@ class BaseExperiment(object):
         self._rank = 0
         self._world_size = 1
         self._dist = self.args.dist
+
+        self.fig = None
+        self.ax = None
 
         self._preparation()
         if self._rank == 0:
@@ -91,8 +98,8 @@ class BaseExperiment(object):
 
         # log and checkpoint
         base_dir = self.args.res_dir if self.args.res_dir is not None else 'work_dirs'
-        self.path = osp.join(base_dir, self.args.ex_name if not self.args.ex_name.startswith(self.args.res_dir) \
-            else self.args.ex_name.split(self.args.res_dir+'/')[-1])
+        self.path = osp.join(base_dir, self.args.ex_name if not self.args.ex_name.startswith(self.args.res_dir)
+                             else self.args.ex_name.split(self.args.res_dir+'/')[-1])
         self.checkpoints_path = osp.join(self.path, 'checkpoints')
         if self._rank == 0:
             check_dir(self.path)
@@ -207,8 +214,8 @@ class BaseExperiment(object):
         checkpoint = {
             'epoch': self._epoch + 1,
             'optimizer': self.method.model_optim.state_dict(),
-            'state_dict': weights_to_cpu(self.method.model.state_dict()) \
-                if not self._dist else weights_to_cpu(self.method.model.module.state_dict()),
+            'state_dict': weights_to_cpu(self.method.model.state_dict())
+            if not self._dist else weights_to_cpu(self.method.model.module.state_dict()),
             'scheduler': self.method.scheduler.state_dict()}
         torch.save(checkpoint, osp.join(self.checkpoints_path, name + '.pth'))
 
@@ -265,7 +272,7 @@ class BaseExperiment(object):
         elif self.args.method == 'dmvfn':
             input_dummy = torch.ones(1, 3, C, H, W, requires_grad=True).to(self.device)
         elif self.args.method == 'prednet':
-           input_dummy = torch.ones(1, 1, C, H, W, requires_grad=True).to(self.device)
+            input_dummy = torch.ones(1, 1, C, H, W, requires_grad=True).to(self.device)
         else:
             raise ValueError(f'Invalid method name {self.args.method}')
 
@@ -328,12 +335,68 @@ class BaseExperiment(object):
         results, eval_log = self.method.vali_one_epoch(self, self.vali_loader)
         self.call_hook('after_val_epoch')
 
+        wandb_logdict = {}
+        for k, v in results.items():
+            wandb_logdict['val/'+k] = v.mean()
+        wandb.log(wandb_logdict)
+
         if self._rank == 0:
             print_log('val\t '+eval_log)
             if has_nni:
                 nni.report_intermediate_result(results['mse'].mean())
 
+        if self.args.loss == "dynmix":
+            self.draw_cov_plot()
+
         return results['loss'].mean()
+
+    def draw_cov_plot(self):
+
+        if not isinstance(self.method.criterion, better_loss):
+            return
+
+        with torch.no_grad():
+            L_list = self.method.criterion.covariance.get_L()
+            cov_list = []
+            prc_list = []
+            for ll in L_list:
+                cov = torch.einsum('bij,bjk->bik', ll, ll.transpose(-1, -2))
+                prc = torch.inverse(cov).cpu().numpy()
+                cov = cov.cpu().numpy()
+                cov_list.append(cov)
+                prc_list.append(prc)
+
+        # b x 3 figure (b is variable and taken from cov_x.shape[0])
+        b = cov_list[0].shape[0]
+        n = len(L_list)
+
+        # if fig is not assigned
+        if self.fig is None:
+            self.fig, self.ax = plt.subplots(b, n, figsize=(3*n, b*3))
+
+        plt.cla()
+
+        for i in range(b):
+            for j, cov in enumerate(cov_list):
+                if b == 1:
+                    self.ax[j].imshow(cov[i])
+                else:
+                    self.ax[i,j].imshow(cov[i])
+
+        # upload fig to wandb
+        wandb.log({'fig/covariance': wandb.Image(self.fig)})
+
+        plt.cla()
+
+        for i in range(b):
+            for j, prc in enumerate(prc_list):
+                if b == 1:
+                    self.ax[j].imshow(prc[i])
+                else:
+                    self.ax[i,j].imshow(prc[i])
+        # upload fig to wandb
+        wandb.log({'fig/covariance': wandb.Image(self.fig)})
+        print(f"covariance plot uploaded to wandb")
 
     def test(self):
         """A testing loop of STL methods"""
