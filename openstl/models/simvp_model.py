@@ -14,7 +14,7 @@ class SimVP_Model(nn.Module):
 
     """
 
-    def __init__(self, in_shape, num_components=3, hid_S=16, hid_T=256, N_S=4, N_T=4, model_type='gSTA',
+    def __init__(self, in_shape, n_components=1, hid_S=16, hid_T=256, N_S=4, N_T=4, model_type='gSTA',
                  mlp_ratio=8., drop=0.0, drop_path=0.0, spatio_kernel_enc=3,
                  spatio_kernel_dec=3, act_inplace=True, **kwargs):
         super(SimVP_Model, self).__init__()
@@ -22,9 +22,10 @@ class SimVP_Model(nn.Module):
         H, W = int(H / 2**(N_S/2)), int(W / 2**(N_S/2))  # downsample 1 / 2**(N_S/2)
         act_inplace = False
         self.enc = Encoder(C, hid_S, N_S, spatio_kernel_enc, act_inplace=act_inplace)
-        self.dec = Decoder(hid_S, C, N_S, spatio_kernel_dec, num_components, act_inplace=act_inplace)
-        self.w_dec = W_Dec(hid_S*T, N_S, spatio_kernel_dec, num_components)
-        self.K = num_components
+        self.dec = Decoder(hid_S, C, N_S, spatio_kernel_dec, n_components, act_inplace=act_inplace)
+        self.w_dec = W_Dec(hid_S*T, N_S, spatio_kernel_dec, n_components)
+        self.sigma_dec = Sigma_Dec(hid_S*T, N_S, spatio_kernel_dec, n_components)
+        self.K = n_components
 
         model_type = 'gsta' if model_type is None else model_type.lower()
         if model_type == 'incepu':
@@ -55,8 +56,14 @@ class SimVP_Model(nn.Module):
         logw = self.w_dec(hid, skip)
         logw = torch.log_softmax(logw, dim=-1)
         # w = w.reshape(B, T, self.K)
+        sigma = self.sigma_dec(hid, skip)
 
-        return Y, logw
+        return Y, logw, sigma
+        # return {
+        #     'pred', Y,
+        #     'logw', logw,
+        #     'sigma', sigma 
+        # }
 
 
 def sampling_generator(N, reverse=False):
@@ -87,12 +94,43 @@ class W_Dec(nn.Module):
 
         # Global average pooling
         gap = hid.mean(dim=[2, 3])
+        # hid.shape
 
         # Final readout to obtain w
         w = self.readout(gap)
+        # w = self.readout(hid.permute(0,2,3,1))
 
         return w
 
+
+
+class Sigma_Dec(nn.Module):
+    def __init__(self, C_hid, N_S, spatio_kernel, n_components, act_inplace=True):
+        samplings = sampling_generator(N_S, reverse=True)
+        super(Sigma_Dec, self).__init__()
+        self.dec = nn.Sequential(
+            *[ConvSC(C_hid, C_hid, spatio_kernel, upsampling=s,
+                     act_inplace=act_inplace) for s in samplings[:-1]],
+            ConvSC(C_hid, C_hid, spatio_kernel, upsampling=samplings[-1],
+                   act_inplace=act_inplace)
+        )
+        # Linear layer to reduce dimensions to [B, num_components]
+        self.readout = nn.Linear(C_hid, n_components)
+
+    def forward(self, hid, enc1=None):
+        for i in range(0, len(self.dec)-1):
+            hid = self.dec[i](hid)
+        hid = self.dec[-1](hid + enc1)
+
+        # Global average pooling
+        # gap = hid.mean(dim=[2, 3])
+        # hid.shape
+
+        # Final readout to obtain w
+        # w = self.readout(gap)
+        w = self.readout(hid.permute(0,2,3,1))
+
+        return w
 
 class Encoder(nn.Module):
     """3D Encoder for SimVP"""

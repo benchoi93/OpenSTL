@@ -29,7 +29,8 @@ class SimVP(Base_method):
         elif args.loss == "mae":
             self.criterion = nn.L1Loss()
         elif args.loss == "dynmix":
-            from .dynmix import better_loss
+            # from .dynmix import better_loss
+            from .dynmix_fixed import better_loss
             self.criterion = better_loss(in_shape=args.in_shape,
                                          rho=args.rho,
                                          n_components=args.n_components,
@@ -86,11 +87,11 @@ class SimVP(Base_method):
             runner.call_hook('before_train_iter')
 
             with self.amp_autocast():
-                pred_y, logw = self._predict(batch_x)
+                pred_y, logw, sigma = self._predict(batch_x)
                 pred_y = pred_y * train_loader.dataset.std + train_loader.dataset.mean
                 batch_y = batch_y * train_loader.dataset.std + train_loader.dataset.mean
                 if self.args.loss == "dynmix":
-                    loss = self.criterion(pred_y, batch_y, logw)
+                    loss = self.criterion(pred_y, batch_y, logw, sigma)
                 else:
                     loss = self.criterion(pred_y[:, :, 0, ...], batch_y)
 

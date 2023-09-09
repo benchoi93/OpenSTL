@@ -13,6 +13,29 @@ except:
 def rescale(x):
     return (x - x.max()) / (x.max() - x.min()) * 2 - 1
 
+def CRPS(pred, true, pred_sigma=None, spatial_norm=False):
+    # continous ranked probability score
+    # for univariate normal,
+    # crps (mu, sigma, y) = sigma * ( (y-mu)/sigma * (2 cdf ( (y-mu)/sigma ) - 1) + 2 pdf ( (y-mu)/sigma ) - 1/np.sqrt(np.pi) )
+
+    pred = torch.FloatTensor(pred)
+    true = torch.FloatTensor(true)
+
+    if pred_sigma is None:
+        pred_sigma = torch.ones_like(pred) * 1e-6
+    pred_sigma = torch.FloatTensor(pred_sigma)
+
+    pdf = torch.exp(-0.5 * ((true - pred) / pred_sigma)**2) / (pred_sigma * np.sqrt(2 * np.pi))
+    cdf = 0.5 * (1 + torch.erf((true - pred) / (pred_sigma * np.sqrt(2))))
+
+    crps = pred_sigma * ((true - pred) / pred_sigma * (2 * cdf - 1) + 2 * pdf - 1 / np.sqrt(np.pi))
+
+    if not spatial_norm:
+        return crps.mean()
+    else:
+        norm = pred.shape[-1] * pred.shape[-2] * pred.shape[-3]
+        return crps.mean() / norm
+    
 
 def MAE(pred, true, spatial_norm=False):
     if not spatial_norm:
@@ -110,7 +133,7 @@ class LPIPS(torch.nn.Module):
         return self.loss_fn.forward(img1, img2).squeeze().detach().cpu().numpy()
 
 
-def metric(pred, true, mean=None, std=None, metrics=['mae', 'mse'],
+def metric(pred, true, pred_std=None, mean=None, std=None, metrics=['mae', 'mse'],
            clip_range=[0, 1], channel_names=None,
            spatial_norm=False, return_log=True):
     """The evaluation function to output metrics.
@@ -134,7 +157,7 @@ def metric(pred, true, mean=None, std=None, metrics=['mae', 'mse'],
         true = true * std + mean
     eval_res = {}
     eval_log = ""
-    allowed_metrics = ['mae', 'mse', 'rmse', 'ssim', 'psnr', 'snr', 'lpips']
+    allowed_metrics = ['mae', 'mse', 'rmse', 'ssim', 'psnr', 'snr', 'lpips','crps']
     invalid_metrics = set(metrics) - set(allowed_metrics)
     if len(invalid_metrics) != 0:
         raise ValueError(f'metric {invalid_metrics} is not supported.')
@@ -144,6 +167,18 @@ def metric(pred, true, mean=None, std=None, metrics=['mae', 'mse'],
         c_width = pred.shape[2] // c_group
     else:
         channel_names, c_group, c_width = None, None, None
+
+    if 'crps' in metrics:
+        if channel_names is None:
+            eval_res['crps'] = CRPS(pred, true, pred_std)
+        else:
+            crps_sum = 0.
+            for i, c_name in enumerate(channel_names):
+                eval_res[f'crps_{str(c_name)}'] = CRPS(pred[:, :, i*c_width: (i+1)*c_width, ...],
+                                                     true[:, :, i*c_width: (i+1)*c_width, ...])
+                crps_sum += eval_res[f'crps_{str(c_name)}']
+            eval_res['crps'] = crps_sum / c_group
+
 
     if 'mse' in metrics:
         if channel_names is None:

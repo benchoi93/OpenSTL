@@ -15,7 +15,8 @@ import matplotlib.pyplot as plt
 import torch
 import torch.distributed as dist
 
-from openstl.methods.dynmix import covariance, better_loss
+from openstl.methods.dynmix import  better_loss
+from openstl.methods.dynmix_fixed import  better_loss as better_loss_fixed
 
 from openstl.core import Hook, metric, Recorder, get_priority, hook_maps
 from openstl.methods import method_maps
@@ -216,6 +217,7 @@ class BaseExperiment(object):
             'optimizer': self.method.model_optim.state_dict(),
             'state_dict': weights_to_cpu(self.method.model.state_dict())
             if not self._dist else weights_to_cpu(self.method.model.module.state_dict()),
+            'covariance' : self.method.criterion.covariance.state_dict() if self.args.loss == "dynmix" else None,
             'scheduler': self.method.scheduler.state_dict()}
         torch.save(checkpoint, osp.join(self.checkpoints_path, name + '.pth'))
 
@@ -234,6 +236,12 @@ class BaseExperiment(object):
             self._epoch = checkpoint['epoch']
             self.method.model_optim.load_state_dict(checkpoint['optimizer'])
             self.method.scheduler.load_state_dict(checkpoint['scheduler'])
+            try:
+                self.method.criterion.covariance.load_state_dict(checkpoint['covariance'])
+                print(f"covariance loaded from {filename}")
+            except:
+                print(f"covariance not loaded from {filename}")
+                pass
 
     def _load_from_state_dict(self, state_dict):
         if self._dist:
@@ -298,8 +306,7 @@ class BaseExperiment(object):
             if self._dist and hasattr(self.train_loader.sampler, 'set_epoch'):
                 self.train_loader.sampler.set_epoch(epoch)
 
-            num_updates, loss_mean, eta = self.method.train_one_epoch(self, self.train_loader,
-                                                                      epoch, num_updates, eta)
+            num_updates, loss_mean, eta = self.method.train_one_epoch(self, self.train_loader,epoch, num_updates, eta)
 
             self._epoch = epoch
             if epoch % self.args.log_step == 0:
@@ -317,6 +324,7 @@ class BaseExperiment(object):
                         'lr': cur_lr,
                         'train_loss': loss_mean.avg,
                         'vali_loss': vali_loss,
+                        # 'alpha/0': 
                     })
                     self._save(name='latest')
             if self._use_gpu and self.args.empty_cache:
@@ -352,7 +360,7 @@ class BaseExperiment(object):
 
     def draw_cov_plot(self):
 
-        if not isinstance(self.method.criterion, better_loss):
+        if not isinstance(self.method.criterion, (better_loss, better_loss_fixed)):
             return
 
         with torch.no_grad():

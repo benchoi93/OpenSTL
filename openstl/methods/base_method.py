@@ -49,8 +49,8 @@ class Base_method(object):
         self.amp_autocast = suppress  # do nothing
         self.loss_scaler = None
         # setup metrics
-        if 'weather' in self.args.dataname:
-            self.metric_list, self.spatial_norm = ['mse', 'rmse', 'mae'], True
+        if ('weather' in self.args.dataname) or ('sst' in self.args.dataname):
+            self.metric_list, self.spatial_norm = ['mse', 'rmse', 'mae', 'crps'], True
         else:
             self.metric_list, self.spatial_norm = ['mse', 'mae'], False
 
@@ -168,25 +168,54 @@ class Base_method(object):
             with torch.no_grad():
                 batch_x, batch_y = batch_x.to(self.device), batch_y.to(self.device)
                 pred_y = self._predict(batch_x, batch_y)
-                if self.args.loss == "dynmix":
-                    pred_y_mix, logw = pred_y
-                    pred_y = (pred_y_mix.permute(0, 2, 1, 3, 4, 5) * logw.exp().unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)).sum(1)
+                # if self.args.loss == "dynmix":
+                pred_y_mix, logw, sigma = pred_y
+                pred_y = (pred_y_mix.permute(0, 2, 1, 3, 4, 5) * logw.exp().unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)).sum(1)
+
+                if not self.args.loss == "dynmix":
+                    sigma = None
+                    logw = None
+                    pred_sigma = None
+                else:
+                    L_list = self.criterion.covariance.get_L()
+                    b, t, k, x, y = pred_y.shape
+
+                    L_list = [l.transpose(-1, -2).unsqueeze(0).repeat(b, 1, 1, 1) for l in L_list]
+                    sigma0 = torch.nn.functional.elu(sigma) + 1 + 1e-6
+                    sigma0 = sigma0.permute(0,3,1,2).reshape(b,k,x*y)
+                    L_list[2] = L_list[2] * sigma0.unsqueeze(-1)
+
+                    # L_list[0] is [ b,k,t,t]
+                    # L_list[2] is [ b,k,xy,xy]
+                    # get diagonal of L_list[0] and L_list[2]
+                    L_list_0_diag = torch.diagonal(L_list[0], dim1=-2, dim2=-1)
+                    L_list_2_diag = torch.diagonal(L_list[2], dim1=-2, dim2=-1)
+                    # generate [b , k , t , xy] tensor by doing element-wise multiplication between L_list[0] and L_list[2]
+                    L_list_0_diag = L_list_0_diag.unsqueeze(-1).repeat(1,1,1,x*y)
+                    L_list_2_diag = L_list_2_diag.unsqueeze(-2).repeat(1,1,t,1)
+                    pred_sigma = L_list_0_diag * L_list_2_diag
+                    pred_sigma = pred_sigma.reshape(b,t,k,x,y)
 
             if gather_data:  # return raw datas
                 results.append(dict(zip(['inputs', 'preds', 'trues'],
                                         [batch_x.cpu().numpy(), pred_y.cpu().numpy(), batch_y.cpu().numpy()])))
             else:  # return metrics
-                eval_res, _ = metric(pred_y.cpu().numpy(), batch_y.cpu().numpy(),
+                eval_res, _ = metric(pred_y.cpu().numpy(), batch_y.cpu().numpy(), pred_sigma.cpu().numpy(),
                                      data_loader.dataset.mean, data_loader.dataset.std,
                                      metrics=self.metric_list, spatial_norm=self.spatial_norm, return_log=False)
 
                 if self.args.loss == "dynmix":
-                    eval_res['loss'] = self.criterion(pred_y_mix, batch_y, logw).cpu().numpy()
+                    eval_res['loss'] = self.criterion(pred_y_mix, batch_y, logw, sigma).cpu().numpy()
                 else:
                     eval_res['loss'] = self.criterion(pred_y, batch_y).cpu().numpy()
 
                 for k in eval_res.keys():
                     eval_res[k] = eval_res[k].reshape(1)
+
+                eval_res["inputs"] = batch_x.cpu().numpy()
+                eval_res["preds"] = pred_y.cpu().numpy()
+                eval_res["trues"] = batch_y.cpu().numpy()
+
                 results.append(eval_res)
 
             prog_bar.update()
@@ -222,6 +251,53 @@ class Base_method(object):
             if k != "loss":
                 eval_str = f"{k}:{v.mean()}" if len(eval_log) == 0 else f", {k}:{v.mean()}"
                 eval_log += eval_str
+
+        residual = results["preds"] - results["trues"]
+        b,t,_,h,w = residual.shape
+
+        residual_t = residual.transpose(1,0,2,3,4).reshape(t,-1)
+        residual_s = residual.reshape(b,t,h*w).transpose(2,0,1).reshape(h*w,b*t)
+        residual_x = residual.transpose(3,0,1,2,4).reshape(h,-1)
+        residual_y = residual.transpose(4,0,1,2,3).reshape(w,-1)
+
+        cov_t = residual_t @ residual_t.T / (b*t*h*w)
+        cov_s = residual_s @ residual_s.T / (b*t*h*w)
+        cov_x = residual_x @ residual_x.T / (b*t*h*w)
+        cov_y = residual_y @ residual_y.T / (b*t*h*w)
+
+        import seaborn as sns
+        import matplotlib.pyplot as plt
+        import wandb
+        sns.set_theme(style="white")
+
+        # draw cov_t, cov_s, cov_x, cov_y and upload on wandb
+        fig, ax = plt.subplots(figsize=(10, 10))
+        sns.heatmap(cov_t, ax=ax)
+        wandb.log({"cov_t": wandb.Image(fig)})
+        plt.close()
+
+        fig, ax = plt.subplots(figsize=(10, 10))
+        sns.heatmap(cov_s, ax=ax)
+        wandb.log({"cov_s": wandb.Image(fig)})
+        plt.close()
+
+        fig, ax = plt.subplots(figsize=(10, 10))
+        sns.heatmap(np.log(cov_x), ax=ax)
+        wandb.log({"cov_x": wandb.Image(fig)})
+        plt.close()
+
+        fig, ax = plt.subplots(figsize=(10, 10))
+        sns.heatmap(np.log(cov_y), ax=ax)
+        wandb.log({"cov_y": wandb.Image(fig)})
+        plt.close()
+
+
+        for i in range(t):
+            fig, ax = plt.subplots(figsize=(10, 10))
+            data = residual[10,:,0]
+            sns.heatmap(data[i], ax = ax, vmin = np.min(data), vmax = np.max(data))
+            wandb.log({f"residual/{str(i).zfill(2)}": wandb.Image(fig)})
+            plt.close()
 
         return results, eval_log
 
